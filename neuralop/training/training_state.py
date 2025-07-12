@@ -67,12 +67,14 @@ def load_training_state(save_dir: Union[str, Path],
         # CUDA:0 to CUDA:DEVICE_ID
         device_id = get_local_rank()
         save_pth = save_dir / f"{save_name}_state_dict.pt"
-        model.load_state_dict(torch.load(save_pth.absolute().as_posix(), map_location="cpu"))
+        # model.load_state_dict(torch.load(save_pth.absolute().as_posix(), map_location="cpu"))
+        model.load_state_dict(torch.load(save_pth.absolute().as_posix(), map_location="cpu", weights_only=False))
         model = model.to(device=f"cuda:{device_id}")
         torch.cuda.empty_cache()
     else:
         save_pth = save_dir / f"{save_name}_state_dict.pt"
-        model.load_state_dict(torch.load(save_pth.absolute().as_posix()))
+        # model.load_state_dict(torch.load(save_pth.absolute().as_posix()))
+        model.load_state_dict(torch.load(save_pth.absolute().as_posix(), weights_only=False))
 
     # load optimizer if state exists
     if optimizer is not None:
