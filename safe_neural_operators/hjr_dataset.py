@@ -12,7 +12,7 @@ from neuralop.data.datasets.tensor_dataset import TensorDataset
 from neuralop.data.transforms.data_processors import DefaultDataProcessor
 from neuralop.data.transforms.normalizers import UnitGaussianNormalizer
 
-from .data_collection import load_hjr_solution, load_grid_states
+from data_collection import load_hjr_solution, load_grid_states
 import random
 
 def load_full_training_dataset(root_dir, num_idxs): 
