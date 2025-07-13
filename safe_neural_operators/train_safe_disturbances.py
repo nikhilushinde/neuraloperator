@@ -48,7 +48,8 @@ def main(data_root_dir,
          save_dir, 
          device, 
          train_epochs, 
-         save_every):
+         save_every, 
+         eval_interval):
     
     # Create Dataset 
     dataset = HJRDataset(root_dir=data_root_dir, 
@@ -122,13 +123,13 @@ def main(data_root_dir,
                     device=device,
                     data_processor=data_processor,
                     wandb_log=False,
-                    eval_interval=3,
+                    eval_interval=eval_interval,
                     use_distributed=False,
                     verbose=True)
 
 
     trainer.train(train_loader=train_loader,
-                test_loaders={},
+                test_loaders={"Test":test_loader},
                 optimizer=optimizer,
                 scheduler=scheduler, 
                 regularizer=False, 
@@ -144,7 +145,7 @@ if __name__ == "__main__":
     samples_for_train = 90
     samples_for_test = 10 
     datapoints_per_sample = 1000
-    batch_size = 32
+    batch_size = 128 #32
     pre_sample_dataset = True 
     encode_output = False 
     encode_input = True 
@@ -167,6 +168,7 @@ if __name__ == "__main__":
     device= "cuda:0"
     train_epochs = 100
     save_every = 1
+    eval_interval = 5
 
 
     main(data_root_dir=data_root_dir, 
@@ -192,5 +194,6 @@ if __name__ == "__main__":
          save_dir=save_dir, 
          device=device, 
          train_epochs=train_epochs, 
-         save_every=save_every
+         save_every=save_every, 
+         eval_interval=eval_interval
          )
