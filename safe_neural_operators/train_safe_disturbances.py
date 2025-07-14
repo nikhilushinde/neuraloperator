@@ -142,8 +142,8 @@ if __name__ == "__main__":
     
     # Dataset Parameters 
     data_root_dir = "/media/jingpei/DATA/fno_gp_data"
-    samples_for_train = 90
-    samples_for_test = 10 
+    samples_for_train = 230 #90
+    samples_for_test = 20 #10 
     datapoints_per_sample = 1000
     batch_size = 128 #32
     pre_sample_dataset = True 
@@ -164,7 +164,7 @@ if __name__ == "__main__":
     
 
     # Saving Parameters
-    save_dir = "/media/jingpei/DATA/fno_models/safe_neural-7-12-25"
+    save_dir = "/media/jingpei/DATA/fno_models/safe_neural-7-13-25_250data"
     device= "cuda:0"
     train_epochs = 100
     save_every = 1
