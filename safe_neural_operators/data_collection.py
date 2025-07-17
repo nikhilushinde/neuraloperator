@@ -7,6 +7,7 @@ import jax.numpy as jnp
 from jax import Array
 import numpy as np
 import matplotlib.pyplot as plt
+from tqdm import tqdm 
 
 import sys 
 sys.path.append("/home/jingpei/Documents/arclab/L4DC25_project")
@@ -15,6 +16,7 @@ from deepreach.dynamics import dynamics
 from deepreach.dynamics import dynamics_hjr
 from deepreach.utils.comparisons import GroundTruthHJSolution
 import os
+import gc  # Add garbage collection
 
 def solve_and_save_hjr(
         dynamics_model, 
@@ -81,6 +83,13 @@ def solve_and_save_hjr(
     os.makedirs(save_folder, exist_ok=True)  # Ensure the folder exists
     torch.save(disturbance_inputs_tensor, save_input_path) #, _use_new_zipfile_serialization=True)
     torch.save(torch_value_function_outputs, save_output_path) #, _use_new_zipfile_serialization=True)
+
+    del disturbance_inputs_tensor
+    del torch_value_function_outputs
+    del ground_truth_hj_solution  # Free memory after saving
+    gc.collect()  # Explicitly run garbage collection
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()  # Clear GPU memory if using CUDA
     return 
 
 def load_hjr_solution(load_path, load_index):
@@ -161,7 +170,8 @@ def get_disturbance_function_sincos(max_magnitude, phase_multiplier, phase_shift
 
     return disturbance_function
 
-def get_dynamics_model_given_disturbance_fn(disturbance_function, tMin, tMax): 
+def get_dynamics_model_given_disturbance_fn(disturbance_function, tMin, tMax, ret_system=False): 
+    # ret_system: If True, return the system model as well
     gravity=9.81 
     max_angle=0.2
     min_thrust=6 
@@ -202,12 +212,18 @@ def get_dynamics_model_given_disturbance_fn(disturbance_function, tMin, tMax):
         tMin=tMin, 
         tMax=tMax, 
     )
-    return system_sv_hjr
+    
+    if ret_system: 
+        return system_sv_hjr, system_sv
+    else: 
+        return system_sv_hjr
 
 def create_hjr_disturbance_dataset(num_datapoints, 
                                    save_folder, 
                                    disturbance_variation_type="sincos", 
-                                   grid_resolution=(51, 51, 51, 51)): 
+                                   grid_resolution=(51, 51, 51, 51), 
+                                   start_num=None, 
+                                   end_num=None): 
     """
     Create a dataset mapping disturbance magnitude to the HJR solution value function. 
     """
@@ -224,7 +240,13 @@ def create_hjr_disturbance_dataset(num_datapoints,
     tMin = 0.0 
     tMax = 3.0 
 
-    for num in range(num_datapoints): 
+    if start_num is None:
+        start_num = 0
+
+    if end_num is None:
+        end_num = num_datapoints
+
+    for num in tqdm(range(start_num, end_num)): 
         curr_max_magnitude = np.random.uniform(min_max_magnitude, max_max_magnitude)
         curr_phase_multiplier = np.random.uniform(min_phase_multiplier, max_phase_multiplier)
         curr_phase_shift = np.random.uniform(min_phase_shift, max_phase_shift)
@@ -270,9 +292,14 @@ def create_hjr_disturbance_dataset(num_datapoints,
 
 if __name__ == "__main__":
     # Example usage
-    num_datapoints = 100
-    save_folder = "/media/jingpei/DATA/fno_gp_data"
+    num_datapoints = 2000 #250
+    start_num = 1907 #822
+
+    save_folder = "/media/jingpei/DATA/fno_gp_data_2000"
     disturbance_variation_type = "sincos"
     grid_resolution = (41, 41, 41, 41) #(51, 51, 51, 51)  # Default resolution
 
-    create_hjr_disturbance_dataset(num_datapoints, save_folder, disturbance_variation_type, grid_resolution)
+    os.makedirs(save_folder, exist_ok=True)  # Ensure the folder exists
+
+    create_hjr_disturbance_dataset(num_datapoints, save_folder, disturbance_variation_type, grid_resolution, 
+                                   start_num=start_num)
