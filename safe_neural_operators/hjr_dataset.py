@@ -14,10 +14,12 @@ from neuralop.data.transforms.normalizers import UnitGaussianNormalizer
 
 from data_collection import load_hjr_solution, load_grid_states
 import random
+from tqdm import tqdm 
 
 def load_full_training_dataset(root_dir, num_idxs): 
     """
     Load the full training dataset from the specified root directory
+    num_idxs: int or list of indices - if int, load that many samples from the dataset, if range, load samples in that range
     """
     grid_states = None 
     input_data = []
@@ -26,7 +28,10 @@ def load_full_training_dataset(root_dir, num_idxs):
     # Load the grid states from the file
     grid_states = load_grid_states(load_path=root_dir, load_index=0)
 
-    for idx in range(num_idxs): 
+    if type(num_idxs) is int: 
+        num_idxs = range(num_idxs)
+
+    for idx in tqdm(num_idxs): 
         input_tensor, output_tensor = load_hjr_solution(load_path=root_dir, 
                                                         load_index=idx)
         input_data.append(input_tensor)
@@ -66,8 +71,8 @@ class HJRDataset:
     """
     def __init__(self, 
                  root_dir: str, 
-                 samples_for_train: int, 
-                 samples_for_test: int, 
+                 samples_for_train: Union[int, List[int]], 
+                 samples_for_test: Union[int, List[int]], 
                  datapoints_per_sample: int,
 
                  batch_size: int, 
@@ -75,16 +80,20 @@ class HJRDataset:
 
                  encode_input: bool=False,
                  encode_output: bool=True,
-                 encoding: str="channel-wise"):
+                 encoding: str="channel-wise", 
+                 full_ordered_dataset: bool=False
+                 ):
         """
         Parameters
         ----------
         root_dir : Union[Path, str]
             root where data is stored
-        samples_for_train : int
-            number of hjr solution samples to use for training
+        samples_for_train : int or list of int
+            number of hjr solution samples to use for training 
+            or list of indices to use for training 
         samples_for_test : int
             number of hjr solution samples to use for testing
+            or list of indices to use for testing
         datapoints_per_sample: int
             number of datapoints to get per sample, NOTE: must be lower than grid_resolution[2] * grid_resolution[3] - as you will be randomly sampling these dimensions
         batch_size : int
@@ -103,6 +112,8 @@ class HJRDataset:
             parameter for input/output normalization. Whether
             to normalize by channel ("channel-wise") or 
             by pixel ("pixel-wise"), default "channel-wise"
+        full_ordered_dataset : bool, optional
+            whether to create a full ordered dataset, where each grid slice is sampled in order
         """
 
         # Save dataloader properties for later
@@ -110,22 +121,29 @@ class HJRDataset:
         self.pre_sample_dataset = pre_sample_dataset
 
         # Load full training dataset
+        if type(samples_for_train) is int:
+            samples_for_train = list(range(samples_for_train))
+        if type(samples_for_test) is int:
+            samples_for_test = list(range(len(samples_for_train), len(samples_for_train) + samples_for_test))
+
         num_idxs = samples_for_train + samples_for_test
+        num_idxs = np.array(num_idxs)
         input_data, output_data, grid_states = load_full_training_dataset(root_dir, num_idxs)
 
         input_data = torch.stack(input_data, dim=0)[:, :, :, 0]
         output_data = torch.stack(output_data, dim=0)
 
-        train_input_data = input_data[:samples_for_train]
-        test_input_data = input_data[samples_for_train:samples_for_train + samples_for_test]
-        train_output_data = output_data[:samples_for_train]
-        test_output_data = output_data[samples_for_train:samples_for_train + samples_for_test]
+        train_input_data = input_data[:len(samples_for_train)]
+        test_input_data = input_data[len(samples_for_train):len(samples_for_train) + len(samples_for_test)]
+        train_output_data = output_data[:len(samples_for_train)]
+        test_output_data = output_data[len(samples_for_train):len(samples_for_train) + len(samples_for_test)]
 
         self.train_input_data = train_input_data
         self.train_output_data = train_output_data
         self.test_input_data = test_input_data
         self.test_output_data = test_output_data
         self.all_input_data = input_data
+        self.all_output_data = output_data
 
         self.grid_states = grid_states
         self.grid_resolution = self.grid_states.shape[:-1] # get grid resolution from the grid states tensor
@@ -212,7 +230,8 @@ class HJR_SubDataset(torch.utils.data.Dataset):
     """
     def __init__(self, input_data, output_data, grid_states, datapoints_per_sample, 
                  channel_squeezed=True, channel_dim=1,
-                 transform_x=None, transform_y=None, random_samples=False):
+                 transform_x=None, transform_y=None, random_samples=False, 
+                 full_ordered_dataset=False):
         """
         Arguments: 
 
@@ -230,6 +249,8 @@ class HJR_SubDataset(torch.utils.data.Dataset):
         - random_samples: bool, optional
             whether to randomly sample the input and output data with each __getitem__ call, by default False
             when False: pre-sample the input and output data and index into these samples with the idx in __getitem__
+        - full_ordered_dataset : bool, optional
+            whether to create a full ordered dataset, where each grid slice is sampled in order
         """
         assert(len(input_data) == len(output_data)), "Size mismatch between input and output datasets"
         self.input_data = input_data
@@ -238,6 +259,9 @@ class HJR_SubDataset(torch.utils.data.Dataset):
         self.grid_resolution = self.grid_states.shape[:-1]  
         self.channel_dim = channel_dim
         self.random_samples = random_samples
+        self.full_ordered_dataset = full_ordered_dataset
+        if self.full_ordered_dataset: 
+            assert(self.random_samples is False), "Cannot create full ordered dataset with random samples"
 
         expand_dims = [-1, self.grid_resolution[0], self.grid_resolution[1]]
         expand_dims.insert(self.channel_dim, 1)
@@ -255,9 +279,12 @@ class HJR_SubDataset(torch.utils.data.Dataset):
 
         self.sample_tuple_list_for_normalization = None 
         if not random_samples: 
-            # Pre-sample the input and output data: [xvel index, yvel index, input data index]
-            self.sample_tuple_list = np.array(random.sample([[i, j, k] for i in range(self.grid_resolution[2]) for j in range(self.grid_resolution[3]) for k in range(len(input_data))], self.dataset_size))
-            self.sample_tuple_list_for_normalization = self.sample_tuple_list
+            if self.full_ordered_dataset:
+                self.sample_tuple_list = np.array([[i, j, k] for i in range(self.grid_resolution[2]) for j in range(self.grid_resolution[3]) for k in range(len(input_data))])
+                self.sample_tuple_list_for_normalization = self.sample_tuple_list
+            else: # Pre-sample the input and output data: [xvel index, yvel index, input data index]
+                self.sample_tuple_list = np.array(random.sample([[i, j, k] for i in range(self.grid_resolution[2]) for j in range(self.grid_resolution[3]) for k in range(len(input_data))], self.dataset_size))
+                self.sample_tuple_list_for_normalization = self.sample_tuple_list
 
             self.sampled_input_dataset = self.sample_tuple_list_to_inputs(self.sample_tuple_list)
             self.sampled_output_dataset = self.sample_tuple_list_to_outputs(self.sample_tuple_list)
@@ -292,7 +319,7 @@ class HJR_SubDataset(torch.utils.data.Dataset):
         sample_indices = sample_tuple_list[:, 2]
 
         # NOTE: ASSUMES CHANNEL DIM IS 1 - do dynamically later 
-        output_samples = self.output_data[sample_indices, :, :, xvel_indices, yvel_indices]
+        output_samples = self.output_data[sample_indices, :, :, :, xvel_indices, yvel_indices] # [sample index, channel dim, x, y, xvel, yvel]
 
         if len(sample_tuple_list) == 1:
             return output_samples.squeeze(0)
@@ -347,5 +374,5 @@ class HJR_SubDataset(torch.utils.data.Dataset):
             output_sample = self.transform_y(output_sample)
 
         # Create dictionary 
-        return_dict = {'x': input_sample, 'y': output_sample}
+        return_dict = {'x': input_sample, 'y': output_sample, 'sample_tuple': sample_tuple}
         return return_dict 
