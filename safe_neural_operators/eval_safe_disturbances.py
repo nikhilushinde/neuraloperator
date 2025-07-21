@@ -73,8 +73,20 @@ def evaluate_safe_disturbances(model_dir: str,
     model = model.to(device)
 
     # 2. Load the dataset 
-    # Dataset Parameters 
-    data_root_dir = "/media/jingpei/DATA/fno_gp_data"
+    # # Dataset Parameters - full ordered dataset
+    # data_root_dir = dataset_path #"/media/jingpei/DATA/fno_gp_data"
+    # samples_for_train = [13]
+    # samples_for_test = [14] 
+    # datapoints_per_sample = 1000
+    # batch_size = 128 #32
+    # pre_sample_dataset = True 
+    # encode_output = False 
+    # encode_input = True 
+    # full_ordered_dataset = True
+    # encoding = "channel-wise"
+
+    # # Dataset Parameters 
+    data_root_dir = dataset_path #"/media/jingpei/DATA/fno_gp_data"
     samples_for_train = 90
     samples_for_test = 10 
     datapoints_per_sample = 1000
@@ -83,6 +95,7 @@ def evaluate_safe_disturbances(model_dir: str,
     encode_output = False 
     encode_input = True 
     encoding = "channel-wise"
+    full_ordered_dataset = False
     dataset = HJRDataset(root_dir=data_root_dir, 
                     samples_for_train=samples_for_train, 
                     samples_for_test=samples_for_test, 
@@ -93,7 +106,8 @@ def evaluate_safe_disturbances(model_dir: str,
 
                     encode_output=encode_output,
                     encode_input=encode_input,
-                    encoding=encoding)
+                    encoding=encoding, 
+                    full_ordered_dataset=full_ordered_dataset)
     
     data_processor = dataset.data_processor.to(device)
     test_db = dataset.test_dbs[0]
@@ -105,8 +119,11 @@ def evaluate_safe_disturbances(model_dir: str,
                             persistent_workers=False)
 
     # 3. Evaluate the model on select dataset samples 
-    num_test_indices = 100
-    test_indices = random.sample(range(len(test_db)), num_test_indices)
+    if full_ordered_dataset: 
+        test_indices = list(range(len(test_db)))
+    else:
+        num_test_indices = 100
+        test_indices = random.sample(range(len(test_db)), num_test_indices)
 
     test_inputs = []
     test_outputs = []
@@ -138,9 +155,20 @@ def evaluate_safe_disturbances(model_dir: str,
     print(f"Average L2 Loss: {sum(all_losses) / len(all_losses)}")
 
 if __name__ == "__main__":
-    model_dir = "/media/jingpei/DATA/fno_models/safe_neural-7-12-25"
-    dataset_path = "/media/jingpei/DATA/fno_gp_data"
-    save_dir = "/media/jingpei/DATA/fno_model_eval_results/safe_neural-7-12-25"
+    # model_dir = "/media/jingpei/DATA/fno_models/safe_neural-7-12-25"
+    # dataset_path = "/media/jingpei/DATA/fno_gp_data"
+    # save_dir = "/media/jingpei/DATA/fno_model_eval_results/safe_neural-7-12-25"
 
-    
+    # model_dir = "/media/jingpei/DATA/fno_models/safe_neural-7-13-25_250data"
+    # dataset_path = "/media/jingpei/DATA/fno_gp_data"
+    # save_dir = "/media/jingpei/DATA/fno_model_eval_results/safe_neural-7-13-25_250data"
+
+    # model_dir = "/media/jingpei/DATA/fno_models/safe_neural-7-16-25_500data"
+    # dataset_path = "/media/jingpei/DATA/fno_gp_data"
+    # save_dir = "/media/jingpei/DATA/fno_model_eval_results/safe_neural-7-16-25_500data_done_fullordered"
+
+    model_dir = "/media/jingpei/DATA/fno_models/safe_neural-7-20-25_500data_revised"
+    dataset_path = "/media/jingpei/DATA/fno_gp_data"
+    save_dir = "/media/jingpei/DATA/fno_model_eval_results/safe_neural-7-20-25_500data_revised"
+
     evaluate_safe_disturbances(model_dir, dataset_path, save_dir)
