@@ -35,11 +35,33 @@ from toy_env import simEnv
 from data_collection import get_dynamics_model_given_disturbance_fn, get_disturbance_function_sincos
 
 # Imports for flying around quadcopter
-from baseline_experiment import plotter, pngs_to_gif, expLogger 
+from baseline_experiment import plotter, expLogger 
 
 # Nominal Controller 
 from disturbance_controller_utils import randomGoalNominalController, HorizontalVelocityWind
 
+from PIL import Image, ImageDraw
+def pngs_to_gif(folder_path, output_path, duration=100, draw_frame_number=False):
+    # Get all PNG files in the folder sorted by name (assuming names are ordered by sequence)
+    images = sorted([os.path.join(folder_path, f) for f in os.listdir(folder_path) if f.endswith('.png')],
+                    key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
+
+    # Load images into a list
+    frames = []
+    for frame_number, image in enumerate(images):
+        with Image.open(image) as img:
+            if draw_frame_number: 
+                # draw the frame number on the image 
+                draw = ImageDraw.Draw(img)
+                # Add frame number text
+                text = f"Frame: {frame_number}"
+                draw.text((10, 10), text, fill="black")  
+
+            frames.append(img.copy())
+
+    # Save as GIF
+    frames[0].save(output_path, format='GIF', append_images=frames[1:], save_all=True, duration=duration, loop=0)
+    return 
 
 def get_gridvalue_function_from_model(disturbance_input, grid_states, model, data_processor, device="cuda:0"):
     """
@@ -223,17 +245,17 @@ def fly_around_drone_experiment(env, nominal_control_fn, safety_filter, num_step
             plotter_obj.update_plot(next_state=next_state, goal=goal, plt_pause=0.01, render=render)
 
         # Save Results
-        if results_folder is not None and save_images: 
+        if (step % 10 == 0) and results_folder is not None and save_images: 
             plt.savefig(os.path.join(results_folder, f"{step:03d}.png"))
             
             ########## Debugging ##########
             # Save the value function slice corresponding to where you are 
-            xvel_slice_idx = int(np.argmin(np.abs(xvels - int(next_state[2]))))
-            yvel_slice_idx = int(np.argmin(np.abs(yvels -int(next_state[3]))))
+            xvel_slice_idx = int(np.argmin(np.abs(xvels - np.array(next_state[2]))))
+            yvel_slice_idx = int(np.argmin(np.abs(yvels - np.array(next_state[3]))))
             if (grid_value_function is not None): # and (step % 10 == 0): 
                 value_function_slice = np.array(grid_value_function[:, :, xvel_slice_idx, yvel_slice_idx])
                 plt.figure()
-                plt.title(f"Value Function: xvel {xvels[xvel_slice_idx]}, yvel {yvels[yvel_slice_idx]}")
+                plt.title(f"Value Function: xvel {xvels[xvel_slice_idx]:.3f}, yvel {yvels[yvel_slice_idx]:.3f}")
                 plt.imshow(value_function_slice, cmap='viridis')
                 plt.colorbar()
                 plt.contour(value_function_slice, levels=[0], colors='red')
@@ -242,7 +264,7 @@ def fly_around_drone_experiment(env, nominal_control_fn, safety_filter, num_step
             if (true_grid_value_function is not None): # and (step % 10 == 0):
                 true_value_function_slice = np.array(true_grid_value_function[-1, :, :, xvel_slice_idx, yvel_slice_idx])
                 plt.figure()
-                plt.title(f"True Value Function: xvel {xvels[xvel_slice_idx]}, yvel {yvels[yvel_slice_idx]}")
+                plt.title(f"True Value Function: xvel {xvels[xvel_slice_idx]:.3f}, yvel {yvels[yvel_slice_idx]:.3f}")
                 plt.imshow(true_value_function_slice, cmap='viridis')
                 plt.colorbar()
                 plt.contour(true_value_function_slice, levels=[0], colors='red')
@@ -258,16 +280,16 @@ def fly_around_drone_experiment(env, nominal_control_fn, safety_filter, num_step
     if save_images: 
         pngs_to_gif(folder_path=results_folder, 
                     output_path=os.path.join(results_folder, "simulation.gif"), 
-                    duration=0.25) #4000*env.dt)#50) # this controls the frame rate
+                    duration=0.25, draw_frame_number=True) #4000*env.dt)#50) # this controls the frame rate
         ########## Debugging ##########
         if (grid_value_function is not None): 
             pngs_to_gif(folder_path=slice_visualizer_folder, 
                         output_path=os.path.join(slice_visualizer_folder, "value_function_slices.gif"), 
-                        duration=0.25)
+                        duration=0.25, draw_frame_number=True)
         if (true_grid_value_function is not None): 
             pngs_to_gif(folder_path=true_slice_visualizer_folder, 
                         output_path=os.path.join(true_slice_visualizer_folder, "true_value_function_slices.gif"), 
-                        duration=0.25)
+                        duration=0.25, draw_frame_number=True)
         ########## Debugging ##########
 
     return states, controls, disturbances, value_functions, current_goals, goal_distances, safety_violations
@@ -384,7 +406,8 @@ if __name__ == "__main__":
     grid_value_function, channel_dim, flattened_tensor_dataset = get_gridvalue_function_from_model(disturbance_input=disturbance_inputs_tensor, 
                                                             grid_states=grid_states, 
                                                             model=model, 
-                                                            data_processor=data_processor)
+                                                            data_processor=data_processor, 
+                                                            device=device)
 
     ####### DEBUGGING #######
     # # DEBUGGING: 3.1 Plot value function slices for logging
