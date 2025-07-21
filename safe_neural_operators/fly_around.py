@@ -41,7 +41,7 @@ from baseline_experiment import plotter, pngs_to_gif, expLogger
 from disturbance_controller_utils import randomGoalNominalController, HorizontalVelocityWind
 
 
-def get_gridvalue_function_from_model(disturbance_input, grid_states, model, data_processor):
+def get_gridvalue_function_from_model(disturbance_input, grid_states, model, data_processor, device="cuda:0"):
     """
     Gets the value function over the whole quad 2d grid (41, 41, 41, 41 ,4)
 
