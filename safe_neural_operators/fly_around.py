@@ -239,6 +239,13 @@ def fly_around_drone_experiment(env, nominal_control_fn, safety_filter, num_step
 
         next_state = env.step(control=safe_control)
 
+        # ##### REMOVE DEBUGGING #####
+        # print("USING NOISELESS STEP ")
+        # next_state = env.noiseless_step(control=safe_control)
+        # env.state = next_state 
+        # env.time += env.dt
+        # ##### REMOVE DEBUGGING #####
+
         # Render
         goal = nominal_control_fn.goal if hasattr(nominal_control_fn, 'goal') else None
         if ((step % 10 == 0) or (quit_on_fail and safety_violations[-1] < 0)) and (render or save_images):
@@ -246,6 +253,10 @@ def fly_around_drone_experiment(env, nominal_control_fn, safety_filter, num_step
 
         # Save Results
         if (step % 10 == 0) and results_folder is not None and save_images: 
+            if use_gt: 
+                plt.title("Simulation: Using HJR")
+            else: 
+                plt.title("Simulation: Using Safe Neural Operator")
             plt.savefig(os.path.join(results_folder, f"{step:03d}.png"))
             
             ########## Debugging ##########
@@ -254,6 +265,7 @@ def fly_around_drone_experiment(env, nominal_control_fn, safety_filter, num_step
             yvel_slice_idx = int(np.argmin(np.abs(yvels - np.array(next_state[3]))))
             if (grid_value_function is not None): # and (step % 10 == 0): 
                 value_function_slice = np.array(grid_value_function[:, :, xvel_slice_idx, yvel_slice_idx])
+                value_function_slice = np.rot90(value_function_slice, k=1)
                 plt.figure()
                 plt.title(f"Value Function: xvel {xvels[xvel_slice_idx]:.3f}, yvel {yvels[yvel_slice_idx]:.3f}")
                 plt.imshow(value_function_slice, cmap='viridis')
@@ -263,6 +275,7 @@ def fly_around_drone_experiment(env, nominal_control_fn, safety_filter, num_step
                 plt.close()
             if (true_grid_value_function is not None): # and (step % 10 == 0):
                 true_value_function_slice = np.array(true_grid_value_function[-1, :, :, xvel_slice_idx, yvel_slice_idx])
+                true_value_function_slice = np.rot90(true_value_function_slice, k=1)
                 plt.figure()
                 plt.title(f"True Value Function: xvel {xvels[xvel_slice_idx]:.3f}, yvel {yvels[yvel_slice_idx]:.3f}")
                 plt.imshow(true_value_function_slice, cmap='viridis')
@@ -292,23 +305,47 @@ def fly_around_drone_experiment(env, nominal_control_fn, safety_filter, num_step
                         duration=0.25, draw_frame_number=True)
         ########## Debugging ##########
 
+        from concatenate_gifs import concatenate_gifs_side_by_side
+        experiment_path = results_folder
+        gif_paths = [
+            os.path.join(experiment_path, "simulation.gif"),
+            os.path.join(experiment_path, os.path.join("slice_visualizer", "value_function_slices.gif")),
+            os.path.join(experiment_path, os.path.join("true_slice_visualizer", "true_value_function_slices.gif"))
+        ]
+        concatenate_gifs_side_by_side(gif_paths, os.path.join(experiment_path, "concatenated_output.gif"))
+
     return states, controls, disturbances, value_functions, current_goals, goal_distances, safety_violations
 
 
 
 if __name__ == "__main__":
     # Model parameters
-    model_dir = "/media/jingpei/DATA/fno_models/safe_neural-7-12-25"
-    save_dir = "/media/jingpei/DATA/fno_model_eval_results/fly_safe_neural-7-13-25"
+    # model_dir = "/media/jingpei/DATA/fno_models/safe_neural-7-12-25"
+    # save_dir = "/media/jingpei/DATA/fno_model_eval_results/fly_safe_neural-7-13-25"
+    # device = "cuda:0"
+    # data_root_dir = "/media/jingpei/DATA/fno_gp_data"
+    # grid_states_path = "/media/jingpei/DATA/fno_gp_data/000_grid_states.pt"
+
+    # model_dir = "/media/jingpei/DATA/fno_models/safe_neural-7-16-25_500data"
+    model_dir = "/media/jingpei/DATA/fno_models/safe_neural-7-20-25_500data_revised"
+
+    # save_dir = "/media/jingpei/DATA/fno_model_eval_results/fly_safe_neural-7-16-25_500data"
+    # save_dir = "/media/jingpei/DATA/fno_model_eval_results/fly_safe_neural-TETSTEST"
+    # save_dir = "/media/jingpei/DATA/fno_model_eval_results/fly_safe_neural-TETSTEST-0.1"
+    # save_dir = "/media/jingpei/DATA/fno_model_eval_results/fly_safe_neural-TETSTEST-0.1_noiselessstep"
+    # save_dir = "/media/jingpei/DATA/fno_model_eval_results/fly_safe_neural-TETSTEST_full_noiselessstep"
+    save_dir = "/media/jingpei/DATA/fno_model_eval_results/fly_safe_neural-TETSTEST_full"
+    # save_dir = "/media/jingpei/DATA/fno_model_eval_results/fly_safe_neural-TETSTEST_full_onlynominal"
+
     device = "cuda:0"
     data_root_dir = "/media/jingpei/DATA/fno_gp_data"
     grid_states_path = "/media/jingpei/DATA/fno_gp_data/000_grid_states.pt"
 
     # System parameters 
     dt = 0.025  # 0.01
-    goal_reset_steps = 100 # Number of steps after which the goal is reset
-    cbf_alpha = 0.1 
-    num_steps = 1000 
+    goal_reset_steps = 100 #150 #20 #100 # Number of steps after which the goal is reset
+    cbf_alpha = 5.0 #1.0 #0.1 # NOTE: 5.0 seems to work the best - need to tune the cbf alpha! 
+    num_steps = 1000 #450 #1000 
 
     use_gt = False #False
     random_seed = 13
@@ -363,12 +400,28 @@ if __name__ == "__main__":
     tMin = 0.0 
     tMax = 3.0 
 
-    curr_max_magnitude = np.random.uniform(min_max_magnitude, max_max_magnitude)
-    curr_phase_multiplier = np.random.uniform(min_phase_multiplier, max_phase_multiplier)
-    curr_phase_shift = np.random.uniform(min_phase_shift, max_phase_shift)
+    # Random disturbance parameters
+    # curr_max_magnitude = np.random.uniform(min_max_magnitude, max_max_magnitude)
+    # curr_phase_multiplier = np.random.uniform(min_phase_multiplier, max_phase_multiplier)
+    # curr_phase_shift = np.random.uniform(min_phase_shift, max_phase_shift)
+
+    # curr_dim = np.random.choice(['x', 'y'])
+    # curr_use_sin = np.random.choice([True, False])
+
+    # Fixed disturbance parameters
+    curr_max_magnitude = 1.0 #0.63 # 0 #0.1 #np.random.uniform(min_max_magnitude, max_max_magnitude)
+    curr_phase_multiplier = 2.5 #2.5 #2.5 #1.5 #np.random.uniform(min_phase_multiplier, max_phase_multiplier)
+    curr_phase_shift = -0.5 #np.random.uniform(min_phase_shift, max_phase_shift)
 
     curr_dim = np.random.choice(['x', 'y'])
-    curr_use_sin = np.random.choice([True, False])
+    curr_use_sin = False #np.random.choice([True, False])
+
+    print("Curr max magnitude: ", curr_max_magnitude)
+    print("Curr phase multiplier: ", curr_phase_multiplier)
+    print("Curr phase shift: ", curr_phase_shift)
+    print("Curr dim: ", curr_dim)
+    print("Curr use sin: ", curr_use_sin)
+    import pdb; pdb.set_trace()
 
     disturbance_function = get_disturbance_function_sincos(
                     max_magnitude=curr_max_magnitude, 
@@ -388,6 +441,7 @@ if __name__ == "__main__":
     env = simEnv(
             system=dynamics_model,
             init_state=torch.tensor([-1.4, 1.7, 0.0, 0.0]),
+            # init_state=torch.tensor([0, 1.7, 0.0, 0.0]),
             disturbance_fn=disturbance_function,
             disturbance_gradient_fn=None,
             dt=dt,
@@ -431,6 +485,7 @@ if __name__ == "__main__":
 
     # 4. Create the CBF 
     hjr_solution = GroundTruthHJSolution(dynamics_model_hjr, solve=False, grid_resolution=grid_states.shape[:-1])
+    # hjr_solution = GroundTruthHJSolution(dynamics_model_hjr, solve=False, grid_resolution=(61, 61, 61, 61)) # HARDCODED FOR NOW - need to change this to the grid resolution of the model
 
     ####### DEBUGGING #######
     hjr_solution.solve_hjr()
@@ -439,12 +494,14 @@ if __name__ == "__main__":
     ####### DEBUGGING #######
 
     if use_gt: 
+        print("\n\n USING HJR \n\n")
         # Use the ground truth value function
         reachability_model = ReachabilityModel(grid=hjr_solution.grid, 
                                            grid_values=jnp.array(true_grid_value_function), # unsqueeze in time dimension
                                            times=jnp.array([tMax])) # Only single value 
     else: 
         # Use the learned value function 
+        print("\n\n USING SAFE NEURAL OPERATOR \n\n")
         reachability_model = ReachabilityModel(grid=hjr_solution.grid, 
                                            grid_values=jnp.array(grid_value_function.detach().cpu().unsqueeze(0).numpy()), # unsqueeze in time dimension
                                            times=jnp.array([tMax])) # Only single value 
