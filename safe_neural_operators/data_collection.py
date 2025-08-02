@@ -9,14 +9,340 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm 
 
+from jax import vmap
+from jax import lax
+
+import os
+import gc  # Add garbage collection
+
 import sys 
+sys.path.append("/home/jingpei/Documents/arclab/neuraloperator")
+sys.path.append("/home/jingpei/Documents/arclab/neuraloperator/safe_neural_operators")
+
+from safe_neural_operators.gp import GPWrapper
+
 sys.path.append("/home/jingpei/Documents/arclab/L4DC25_project")
 
 from deepreach.dynamics import dynamics 
 from deepreach.dynamics import dynamics_hjr
 from deepreach.utils.comparisons import GroundTruthHJSolution
-import os
-import gc  # Add garbage collection
+
+sys.path.append("/home/jingpei/Documents/arclab/L4DC25_project/custom_sim/quad2d")
+sys.path.append("/home/jingpei/Documents/arclab/L4DC25_project/custom_sim")
+sys.path.append("/home/jingpei/Documents/arclab/L4DC25_project")
+
+from deepreach.dynamics import dynamics 
+from deepreach.dynamics import dynamics_hjr
+from deepreach.utils.comparisons import GroundTruthHJSolution
+
+from toy_env import simEnv
+from disturbance_controller_utils import randomGoalNominalController, HorizontalVelocityWind
+
+####################################### Disturbance Functions #######################################
+def get_disturbance_function_sincos(max_magnitude, phase_multiplier, phase_shift, dim='x', use_sin=True): 
+    """
+    Get a disturbance function that returns the disturbance magnitude based on the state input.
+
+    Disturbances are either sin or cos((x + offset) * phase_multiplier) * max_magnitude - either in x or y direction
+
+    args: 
+        max_magnitude: Maximum disturbance magnitude
+        phase_multiplier: Multiplier for the phase of the disturbance
+        phase_shift: Phase shift for the disturbance
+        dim: 'x' or 'y' to indicate the direction of the disturbance
+        use_sin: If True, use sine function; if False, use cosine function
+    """
+    if dim == 'x':
+        state_dim_idx = 0 
+    elif dim == 'y':
+        state_dim_idx = 1
+    else:
+        raise ValueError("Dimension must be 'x' or 'y'.")
+    
+
+    def disturbance_function(state):
+        # PyTorch branch
+        if isinstance(state, torch.Tensor):
+            if len(state.shape) == 1:
+                state = state.unsqueeze(0)
+
+            if use_sin: 
+                mag = torch.sin(state[:, state_dim_idx] * phase_multiplier + phase_shift) * max_magnitude
+            else:
+                mag = torch.cos(state[:, state_dim_idx] * phase_multiplier + phase_shift) * max_magnitude
+            mag = torch.abs(mag)
+            disturbances = mag.unsqueeze(1).repeat(1, 4)  # shape (B, 4)
+
+        # JAX branch
+        elif isinstance(state, (jnp.ndarray, Array, np.ndarray)):
+            if len(state.shape) == 1:
+                state = jnp.expand_dims(state, 0)
+            if use_sin: 
+                mag = jnp.sin(state[:, state_dim_idx] * phase_multiplier + phase_shift) * max_magnitude
+            else:
+                mag = jnp.cos(state[:, state_dim_idx] * phase_multiplier + phase_shift) * max_magnitude
+            mag = jnp.abs(mag)
+            disturbances = jnp.repeat(mag[:, None], 4, axis=1)  # shape (B, 4)
+
+        else:
+            raise TypeError(f"Unsupported input type: {type(state)}")
+
+        if disturbances.shape[0] == 1: 
+            return disturbances[0]
+        else:
+            return disturbances
+
+    return disturbance_function
+
+
+
+def get_disturbance_fn_from_GP_jax_USEGRID(gp_model, grid_states, min_disturbance_magnitude, max_disturbance_magnitude, num_std_away=2.0):
+    """
+    Wrapper to convert a GP model to a disturbance function that can be used in the dynamics model. 
+    NOTE: This is a grid based method where you are just finding the closest grid point to the inputted grid state
+    and returning that value as the disturbance
+    NOTE: preference to get the gp function above working instead. 
+
+    args: 
+        - gp_model: GP model that has been trained on [x, y] -> disturbance value
+        - grid_states: [x, y, xvel, yvel, 4] grid states that the GP model has been trained on
+            NOTE: only have 2d grid states [x, y] for the GP model as that is all you are comparing
+        - min_disturbance_magnitude: minimum disturbance magnitude to clip to
+        - max_disturbance_magnitude: maximum disturbance magnitude to clip to
+        - num_std_away: number of standard deviations away from the mean to consider for the disturbance magnitude
+    """
+
+    # Evaluate GP model on grid states 
+    flattened_grid_states = grid_states.reshape(-1, grid_states.shape[-1])  # Flatten to [N, 4]
+    disturbances_mean, disturbances_var = gp_model.predict(flattened_grid_states[:, :2])
+    disturbances_stdaway = np.abs(disturbances_mean) + num_std_away * np.sqrt(disturbances_var)  # Get max disturbance magnitude
+    disturbances_stdaway = np.clip(disturbances_stdaway, min_disturbance_magnitude, max_disturbance_magnitude)
+    
+    flattened_grid_states_jax = jax.numpy.array(flattened_grid_states)  # Convert to JAX array for JAX compatibility
+    disturbances_stdaway_jax = jax.numpy.array(disturbances_stdaway)  # Convert to JAX array for JAX compatibility
+    grid_xy = jnp.asarray(flattened_grid_states[:, :2])  # [N, 2]
+    def compute_single_disturbance_jax(state_xy):
+        # state_xy: [2]
+        dists = jnp.linalg.norm(grid_xy - state_xy, axis=-1)  # shape: [N]
+        idx = jnp.argmin(dists)
+        mag = disturbances_stdaway_jax[idx]  # [D]
+        return jnp.tile(mag, (4,))  # shape [4] (repeats per dim)
+
+    # Create disturbance function using grid states and evaluted GP model
+    def disturbance_function_jax_grid(state):
+        # PyTorch branch
+        if isinstance(state, torch.Tensor):
+            if len(state.shape) == 1:
+                state = state.unsqueeze(0)
+
+            distances = torch.norm(torch.tensor(flattened_grid_states[:, :2]).unsqueeze(1) - torch.tensor(state[:, :2]), dim=-1)
+            closest_grid_indices = torch.argmin(distances, dim=1)
+            mag = torch.tensor(disturbances_stdaway)[closest_grid_indices]
+
+            disturbances = mag.repeat(1, 4).unsqueeze(-1)[:, :, 0]  # shape (B, 4)
+
+        elif isinstance(state, np.ndarray):
+            if len(state.shape) == 1:
+                state = np.expand_dims(state, axis=0)
+
+            distances = np.linalg.norm(flattened_grid_states[:, None, :2] - state[:, :2], axis=-1)
+            closest_grid_indices = np.argmin(distances, axis=0)
+            mag = disturbances_stdaway[closest_grid_indices]
+
+            disturbances = np.repeat(mag[:, None], 4, axis=1)[:, :, 0]  # shape (B, 4)
+
+        # JAX branch
+        elif isinstance(state, (jnp.ndarray, Array)):
+            if len(state.shape) == 1:
+                state = jnp.expand_dims(state, 0)
+            
+            state_xy = state[:, :2]  # shape: [B, 2]
+
+            # jax lax scan implementation
+            # state_xy_flat = state.reshape(-1, state.shape[-1])[:, :2]  # [B, 2]
+            # def scan_fn(carry, s):
+            #     return carry, compute_single_disturbance_jax(s)
+            # _, disturbances_flat = lax.scan(scan_fn, None, state_xy_flat)
+            # disturbances = disturbances_flat.reshape(state.shape[:-1] + (4,))  # Restore original shape
+            # return disturbances[0] if disturbances.shape[0] == 1 else disturbances
+
+            # jax vmap implementation 
+            batched_compute = vmap(compute_single_disturbance_jax)
+            disturbances = batched_compute(state_xy)  # shape: [B, 4]
+
+            # jax matrix implementation - needs fixing
+            # dists = jnp.linalg.norm(flattened_grid_states_jax[:, None, :2] - state_xy[:, :2], axis=-1)  # Compute distances
+            # closest_grid_indices = jnp.argmin(dists, axis=0)  # Find closest grid indices
+            # mag = disturbances_stdaway_jax[closest_grid_indices]  # Get disturbance magnitudes
+            # disturbances = jnp.repeat(mag[:, None], 4, axis=1)  # Repeat magnitudes for all dimensions
+
+            # disturbances = jnp.repeat(mag[:, None], 4, axis=1)[:, :, 0]  # shape (B, 4)
+
+        else:
+            raise TypeError(f"Unsupported input type: {type(state)}")
+
+        if disturbances.shape[0] == 1: 
+            return disturbances[0]
+        else:
+            return disturbances
+    
+    return disturbance_function_jax_grid
+
+
+def get_disturbance_function_flyaround(full_disturbance_fn, initial_sample_radius, fly_around_timesteps, steps_per_goal, sample_freq, xy_range, xy_grid_states, 
+                                       dt, tMin, tMax,  min_disturbance_magnitude, max_disturbance_magnitude, gp_kernel=None, reoptimize_gp=False):
+    """
+    Gets a disturbance function with partial GP samples from flying around the environment
+    Args: 
+        - full_disturbance_fn: The full disturbance function to use (that you want to sample by flying around)
+        - initial_sample_radius: The radius of the initial sample circle around the drone
+        - fly_around_timesteps: The number of timesteps to fly around the environment
+        - sample_freq: The frequency of sampling the disturbance function while flying around
+        - steps_per_goal: The number of steps per second to take before creating another random goal
+        - xy_range: The range of the x and y dimensions to sample the initial state from
+        - xy_grid_states: The grid states in the x and y dimensions to use for creating the grid based disturbance function from the GP
+
+        - dt: the dt to use for the environment
+        - tMin: The minimum time for the environment
+        - tMax: The maximum time for the environment
+        - min_disturbance_magnitude: Minimum disturbance magnitude to clip to 
+        - max_disturbance_magnitude: Maximum disturbance magnitude to clip to 
+        - gp_kernel: The GP kernel to use for the GP model (if None, use default and optimize with the first set of samples)
+        - reoptimize_gp: If True, reoptimize the GP model with the new samples after flying around - DEFAULT FALSE
+    """
+
+    model_input_indices = [0, 1]  # x, y indices for the disturbance function
+    flattened_xy_grid_states = xy_grid_states.reshape(-1, 4)  # Flatten the grid states to (N, 4)
+    flattened_disturbance_grid = full_disturbance_fn(xy_grid_states)
+    
+    # Random initial state 
+    init_state_x = np.random.uniform(xy_range[0][0], xy_range[0][1])
+    init_state_y = np.random.uniform(xy_range[1][0], xy_range[1][1])
+
+    # Create environment and initialize drone 
+    dynamics_model_full_hjr, dynamics_model_full = get_dynamics_model_given_disturbance_fn(
+                                                            disturbance_function=full_disturbance_fn,
+                                                            tMin=tMin,
+                                                            tMax=tMax, 
+                                                            ret_system=True
+                                                        )
+    
+    env = simEnv(system=dynamics_model_full,
+                init_state=torch.tensor([init_state_x, init_state_y, 0.0, 0.0]),
+                # init_state=torch.tensor([0, 1.7, 0.0, 0.0]),
+                disturbance_fn=full_disturbance_fn,
+                disturbance_gradient_fn=None,
+                dt=dt,
+        )
+    
+    nominal_control_fn = randomGoalNominalController(
+                system=dynamics_model_full,
+                system_type="Quad2DAttitude",
+                env=env, 
+                init_goal_position=None, 
+                goal_threshold=0.05, 
+                goal_reset_step=steps_per_goal,
+            )
+
+    # Get initial samples close to the initial state
+    init_state = init_state[:2]  # Only consider x, y for the grid states
+    distances = np.linalg.norm(flattened_xy_grid_states[:, :2] - init_state.cpu().numpy(), axis=1)
+    close_indices = np.where(distances < initial_sample_radius)[0]
+    un_close_indices = np.where(distances >= initial_sample_radius)[0]
+    sampled_states = flattened_xy_grid_states[close_indices]
+
+    # Train GP 
+    partial_x_init = flattened_xy_grid_states[close_indices, :][:, model_input_indices]  # x, y
+    partial_y_init = flattened_disturbance_grid[close_indices, :][:, 0:1]  # Disturbance value
+    if gp_kernel is None:
+        gp_model_partial = GPWrapper(X_init=partial_x_init, Y_init=partial_y_init, optimize=True)
+    else: 
+        raise NotImplementedError("GP kernel optimization not implemented yet. Please provide a GP kernel.")
+
+    # Fly drone around to collect more samples 
+    sample_freq = 5
+    additional_x_data = []
+    additional_y_data = []
+    for step in tqdm(range(fly_around_timesteps)):
+        nominal_control = nominal_control_fn(env.state)
+        # NOTE: Noiseless step
+        next_state = env.noiseless_step(nominal_control)
+        env.state = next_state 
+        env.time += env.dt
+        if step % sample_freq == 0:
+            additional_x_data.append(np.array(env.state))
+            additional_y_data.append(full_disturbance_fn(np.array(env.state)))
+
+    # Train GP again 
+    additional_x_data = np.array(additional_x_data)[:, model_input_indices]
+    additional_y_data = np.array(additional_y_data)[:, 0:1]
+    gp_model_partial.add_sample(x_new=additional_x_data, 
+                    y_new=additional_y_data, 
+                    reoptimize=reoptimize_gp)
+
+    # Convert GP to grid based disturbance function for HJR 
+    num_std_away = 2.0 
+    partial_gp_disturbance_fn_for_hjr_grid = get_disturbance_fn_from_GP_jax_USEGRID(gp_model=gp_model_partial, 
+                                                                                grid_states=xy_grid_states, 
+                                                                                min_disturbance_magnitude=min_disturbance_magnitude, 
+                                                                                max_disturbance_magnitude=max_disturbance_magnitude, 
+                                                                                num_std_away=num_std_away)
+
+    return partial_gp_disturbance_fn_for_hjr_grid
+
+
+####################################### Dynamics Related Functions #######################################
+
+
+def get_dynamics_model_given_disturbance_fn(disturbance_function, tMin, tMax, ret_system=False): 
+    # ret_system: If True, return the system model as well
+    gravity=9.81 
+    max_angle=0.2
+    min_thrust=6 
+    max_thrust=13 
+
+
+    tMin = 0.0
+    tMax = 3.0 
+
+    set_mode='avoid'
+    boundary_cfg_num = 2
+    problem_type = "avoid"
+
+    # SV Deepreach System 
+    system_sv = dynamics.Quad2DAttitude_Consolidated_SpaceVarying(
+        gravity=gravity, 
+        max_angle=max_angle,
+        min_thrust=min_thrust,
+        max_thrust=max_thrust,
+        disturbance_function=disturbance_function,
+        set_mode=set_mode,
+        boundary_cfg_num = boundary_cfg_num ,
+        problem_type = problem_type
+    )
+
+
+
+    # SV HJR System 
+    system_sv_hjr = dynamics_hjr.Quad2DAttitude_Consolidated_SpaceVarying(
+        torch_dynamics=system_sv, 
+        gravity=gravity, 
+        max_angle=max_angle,
+        min_thrust=min_thrust,
+        max_thrust=max_thrust,
+        disturbance_function=disturbance_function,
+        boundary_cfg_num = boundary_cfg_num ,
+        problem_type = problem_type,
+        tMin=tMin, 
+        tMax=tMax, 
+    )
+    
+    if ret_system: 
+        return system_sv_hjr, system_sv
+    else: 
+        return system_sv_hjr
+
+####################################### HJR Related Functions #######################################
 
 def solve_and_save_hjr(
         dynamics_model, 
@@ -114,109 +440,6 @@ def load_grid_states(load_path, load_index):
     grid_states_path = os.path.join(load_path, f"{load_index:03d}_grid_states.pt")
     grid_states = torch.load(grid_states_path) #, map_location='cpu')
     return grid_states
-
-def get_disturbance_function_sincos(max_magnitude, phase_multiplier, phase_shift, dim='x', use_sin=True): 
-    """
-    Get a disturbance function that returns the disturbance magnitude based on the state input.
-
-    Disturbances are either sin or cos((x + offset) * phase_multiplier) * max_magnitude - either in x or y direction
-
-    args: 
-        max_magnitude: Maximum disturbance magnitude
-        phase_multiplier: Multiplier for the phase of the disturbance
-        phase_shift: Phase shift for the disturbance
-        dim: 'x' or 'y' to indicate the direction of the disturbance
-        use_sin: If True, use sine function; if False, use cosine function
-    """
-    if dim == 'x':
-        state_dim_idx = 0 
-    elif dim == 'y':
-        state_dim_idx = 1
-    else:
-        raise ValueError("Dimension must be 'x' or 'y'.")
-    
-
-    def disturbance_function(state):
-        # PyTorch branch
-        if isinstance(state, torch.Tensor):
-            if len(state.shape) == 1:
-                state = state.unsqueeze(0)
-
-            if use_sin: 
-                mag = torch.sin(state[:, state_dim_idx] * phase_multiplier + phase_shift) * max_magnitude
-            else:
-                mag = torch.cos(state[:, state_dim_idx] * phase_multiplier + phase_shift) * max_magnitude
-            mag = torch.abs(mag)
-            disturbances = mag.unsqueeze(1).repeat(1, 4)  # shape (B, 4)
-
-        # JAX branch
-        elif isinstance(state, (jnp.ndarray, Array, np.ndarray)):
-            if len(state.shape) == 1:
-                state = jnp.expand_dims(state, 0)
-            if use_sin: 
-                mag = jnp.sin(state[:, state_dim_idx] * phase_multiplier + phase_shift) * max_magnitude
-            else:
-                mag = jnp.cos(state[:, state_dim_idx] * phase_multiplier + phase_shift) * max_magnitude
-            mag = jnp.abs(mag)
-            disturbances = jnp.repeat(mag[:, None], 4, axis=1)  # shape (B, 4)
-
-        else:
-            raise TypeError(f"Unsupported input type: {type(state)}")
-
-        if disturbances.shape[0] == 1: 
-            return disturbances[0]
-        else:
-            return disturbances
-
-    return disturbance_function
-
-def get_dynamics_model_given_disturbance_fn(disturbance_function, tMin, tMax, ret_system=False): 
-    # ret_system: If True, return the system model as well
-    gravity=9.81 
-    max_angle=0.2
-    min_thrust=6 
-    max_thrust=13 
-
-
-    tMin = 0.0
-    tMax = 3.0 
-
-    set_mode='avoid'
-    boundary_cfg_num = 2
-    problem_type = "avoid"
-
-    # SV Deepreach System 
-    system_sv = dynamics.Quad2DAttitude_Consolidated_SpaceVarying(
-        gravity=gravity, 
-        max_angle=max_angle,
-        min_thrust=min_thrust,
-        max_thrust=max_thrust,
-        disturbance_function=disturbance_function,
-        set_mode=set_mode,
-        boundary_cfg_num = boundary_cfg_num ,
-        problem_type = problem_type
-    )
-
-
-
-    # SV HJR System 
-    system_sv_hjr = dynamics_hjr.Quad2DAttitude_Consolidated_SpaceVarying(
-        torch_dynamics=system_sv, 
-        gravity=gravity, 
-        max_angle=max_angle,
-        min_thrust=min_thrust,
-        max_thrust=max_thrust,
-        disturbance_function=disturbance_function,
-        boundary_cfg_num = boundary_cfg_num ,
-        problem_type = problem_type,
-        tMin=tMin, 
-        tMax=tMax, 
-    )
-    
-    if ret_system: 
-        return system_sv_hjr, system_sv
-    else: 
-        return system_sv_hjr
 
 def create_hjr_disturbance_dataset(num_datapoints, 
                                    save_folder, 
