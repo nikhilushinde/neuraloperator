@@ -252,6 +252,9 @@ class GPWrapper:
             mean: (M, 1)
             variance: (M, 1)
         """
+        # jax.config.update("jax_enable_x64", True) - otherwise gp computations are too off
+        assert(jax.config.jax_enable_x64, "JAX must be configured to use 64-bit precision for GP predictions. Use: jax.config.update(\"jax_enable_x64\", True)")
+
         # Compute kernel between test points and training data
         k_x_test = self.rbf_kernel_jax(jnp.asarray(x_test), self.X_train_jax)  # (M, N)
 
