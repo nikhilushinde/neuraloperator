@@ -9,6 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm 
 
+import jax 
 from jax import vmap
 from jax import lax
 
@@ -213,7 +214,7 @@ def get_disturbance_function_flyaround(full_disturbance_fn, initial_sample_radiu
 
     model_input_indices = [0, 1]  # x, y indices for the disturbance function
     flattened_xy_grid_states = xy_grid_states.reshape(-1, 4)  # Flatten the grid states to (N, 4)
-    flattened_disturbance_grid = full_disturbance_fn(xy_grid_states)
+    flattened_disturbance_grid = full_disturbance_fn(flattened_xy_grid_states)
     
     # Random initial state 
     init_state_x = np.random.uniform(xy_range[0][0], xy_range[0][1])
@@ -227,8 +228,9 @@ def get_disturbance_function_flyaround(full_disturbance_fn, initial_sample_radiu
                                                             ret_system=True
                                                         )
     
+    init_state=torch.tensor([init_state_x, init_state_y, 0.0, 0.0])
     env = simEnv(system=dynamics_model_full,
-                init_state=torch.tensor([init_state_x, init_state_y, 0.0, 0.0]),
+                init_state=init_state, 
                 # init_state=torch.tensor([0, 1.7, 0.0, 0.0]),
                 disturbance_fn=full_disturbance_fn,
                 disturbance_gradient_fn=None,
