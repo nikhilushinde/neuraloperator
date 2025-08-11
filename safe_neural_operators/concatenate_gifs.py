@@ -7,6 +7,7 @@ def concatenate_gifs_side_by_side(gif_paths, output_path):
     
     # Get number of frames for each gif and find the minimum
     n_frames = min(gif.n_frames for gif in gifs)
+    print(f"Number of frames to process: {n_frames}\n\n\n")
     
     frames = []
     durations = []
@@ -57,9 +58,15 @@ def concatenate_gifs_side_by_side(gif_paths, output_path):
 # concatenate_gifs_side_by_side(["gif1.gif", "gif2.gif", "gif3.gif"], "output.gif")
 if __name__ == "__main__":
     base_path = "/media/jingpei/DATA/fno_model_eval_results"
-    experiment_path = os.path.join(base_path, "fly_safe_neural-7-13-25")
+    # experiment_path = os.path.join(base_path, "fly_safe_neural-7-13-25")
     # experiment_path = os.path.join(base_path, "fly_safe_neural-7-13-25_gt")
-    
+    # experiment_path = os.path.join(base_path, "fly_safe_neural-TETSTEST_gt")
+    # experiment_path = os.path.join(base_path, "fly_safe_neural-TETSTEST-0.1_gt")
+    # experiment_path = os.path.join(base_path, "fly_safe_neural-TETSTEST-0.1_noiselessstep_gt")
+    # experiment_path = os.path.join(base_path, "fly_safe_neural-TETSTEST_full_noiselessstep_gt")
+    # experiment_path = os.path.join(base_path, "fly_safe_neural-TETSTEST_full_onlynominal_gt")
+    experiment_path = os.path.join(base_path, "fly_safe_neural-TETSTEST_full_gt")
+
     experiment_path = os.path.join(experiment_path, "flying_drone_images")
 
     gif_paths = [

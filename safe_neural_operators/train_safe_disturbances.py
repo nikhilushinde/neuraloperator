@@ -14,7 +14,11 @@ sys.path.append("..")
 
 from deepreach.dynamics import dynamics 
 from deepreach.dynamics import dynamics_hjr
-from deepreach.utils.comparisons import GroundTruthHJSolution
+
+sys.path.append("/home/jingpei/Documents/arclab/neuraloperator")
+sys.path.append("/home/jingpei/Documents/arclab/neuraloperator/safe_neural_operators")
+from safe_neural_operators.gt_hjr_solution import GroundTruthHJSolution
+# Replaced #from deepreach.utils.comparisons import GroundTruthHJSolution
 
 # NeuralOp Imports 
 from neuralop.models import FNO
@@ -141,11 +145,11 @@ def main(data_root_dir,
 if __name__ == "__main__":
     
     # Dataset Parameters 
-    data_root_dir = "/media/jingpei/DATA/fno_gp_data"
-    samples_for_train = 230 #90
-    samples_for_test = 20 #10 
+    data_root_dir = "/media/jingpei/DATA/fno_gp_data_2000"
+    samples_for_train = 500 #90
+    samples_for_test = 50 #10 
     datapoints_per_sample = 1000
-    batch_size = 128 #32
+    batch_size = 256 #32
     pre_sample_dataset = True 
     encode_output = False 
     encode_input = True 
@@ -164,7 +168,7 @@ if __name__ == "__main__":
     
 
     # Saving Parameters
-    save_dir = "/media/jingpei/DATA/fno_models/safe_neural-7-13-25_250data"
+    save_dir = "/media/jingpei/DATA/fno_models/safe_neural-7-20-25_500data_revised"
     device= "cuda:0"
     train_epochs = 100
     save_every = 1

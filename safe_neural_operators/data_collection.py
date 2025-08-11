@@ -21,6 +21,8 @@ sys.path.append("/home/jingpei/Documents/arclab/neuraloperator")
 sys.path.append("/home/jingpei/Documents/arclab/neuraloperator/safe_neural_operators")
 
 from safe_neural_operators.gp import GPWrapper
+from safe_neural_operators.gt_hjr_solution import GroundTruthHJSolution
+# Replaced #from deepreach.utils.comparisons import GroundTruthHJSolution
 
 sys.path.append("/home/jingpei/Documents/arclab/L4DC25_project")
 
@@ -34,7 +36,7 @@ sys.path.append("/home/jingpei/Documents/arclab/L4DC25_project")
 
 from deepreach.dynamics import dynamics 
 from deepreach.dynamics import dynamics_hjr
-from deepreach.utils.comparisons import GroundTruthHJSolution
+
 
 from toy_env import simEnv
 from disturbance_controller_utils import randomGoalNominalController, HorizontalVelocityWind
@@ -97,7 +99,7 @@ def get_disturbance_function_sincos(max_magnitude, phase_multiplier, phase_shift
 
 
 
-def get_disturbance_fn_from_GP_jax_USEGRID(gp_model, grid_states, min_disturbance_magnitude, max_disturbance_magnitude, num_std_away=2.0):
+def get_disturbance_fn_from_GP_jax_USEGRID(gp_model, grid_states, min_disturbance_magnitude, max_disturbance_magnitude, num_std_away=2.0, border_padding=None):
     """
     Wrapper to convert a GP model to a disturbance function that can be used in the dynamics model. 
     NOTE: This is a grid based method where you are just finding the closest grid point to the inputted grid state
@@ -111,11 +113,30 @@ def get_disturbance_fn_from_GP_jax_USEGRID(gp_model, grid_states, min_disturbanc
         - min_disturbance_magnitude: minimum disturbance magnitude to clip to
         - max_disturbance_magnitude: maximum disturbance magnitude to clip to
         - num_std_away: number of standard deviations away from the mean to consider for the disturbance magnitude
+        - border_padding: default None, Optional int: how many grid points to pad the border by - use the max disturbance value for padding. 
     """
 
     # Evaluate GP model on grid states 
     flattened_grid_states = grid_states.reshape(-1, grid_states.shape[-1])  # Flatten to [N, 4]
     disturbances_mean, disturbances_var = gp_model.predict(flattened_grid_states[:, :2])
+
+    if border_padding is not None:
+        padded_xy_states = np.concatenate([
+            grid_states[:border_padding, :].reshape(-1, grid_states.shape[-1]),
+            grid_states[-border_padding:, :].reshape(-1, grid_states.shape[-1]),
+            grid_states[:, :border_padding].reshape(-1, grid_states.shape[-1]),
+            grid_states[:, -border_padding:].reshape(-1, grid_states.shape[-1])
+        ], axis=0)  # Concatenate along the first axis
+
+        # Get the indices where padded_xy_states correspond to flattened_grid_states
+        padded_indices = []
+        for padded_state in padded_xy_states:
+            distances = np.linalg.norm(flattened_grid_states[:, :2] - padded_state[:2], axis=1)
+            closest_index = np.argmin(distances)
+            padded_indices.append(closest_index)
+        for idx in padded_indices:
+            disturbances_mean[idx] = max_disturbance_magnitude
+
     disturbances_stdaway = np.abs(disturbances_mean) + num_std_away * np.sqrt(disturbances_var)  # Get max disturbance magnitude
     disturbances_stdaway = np.clip(disturbances_stdaway, min_disturbance_magnitude, max_disturbance_magnitude)
     
@@ -191,7 +212,8 @@ def get_disturbance_fn_from_GP_jax_USEGRID(gp_model, grid_states, min_disturbanc
 
 
 def get_disturbance_function_flyaround(full_disturbance_fn, initial_sample_radius, fly_around_timesteps, steps_per_goal, sample_freq, xy_range, xy_grid_states, 
-                                       dt, tMin, tMax,  min_disturbance_magnitude, max_disturbance_magnitude, gp_kernel=None, reoptimize_gp=False):
+                                       dt, tMin, tMax,  min_disturbance_magnitude, max_disturbance_magnitude, gp_kernel=None, reoptimize_gp=False, return_gp_model=False, 
+                                       border_padding=None):
     """
     Gets a disturbance function with partial GP samples from flying around the environment
     Args: 
@@ -210,6 +232,7 @@ def get_disturbance_function_flyaround(full_disturbance_fn, initial_sample_radiu
         - max_disturbance_magnitude: Maximum disturbance magnitude to clip to 
         - gp_kernel: The GP kernel to use for the GP model (if None, use default and optimize with the first set of samples)
         - reoptimize_gp: If True, reoptimize the GP model with the new samples after flying around - DEFAULT FALSE
+        - border_padding: default None, Optional int: how many grid points to pad the border by - use the max disturbance value for padding. 
     """
 
     model_input_indices = [0, 1]  # x, y indices for the disturbance function
@@ -288,8 +311,11 @@ def get_disturbance_function_flyaround(full_disturbance_fn, initial_sample_radiu
                                                                                 grid_states=xy_grid_states, 
                                                                                 min_disturbance_magnitude=min_disturbance_magnitude, 
                                                                                 max_disturbance_magnitude=max_disturbance_magnitude, 
-                                                                                num_std_away=num_std_away)
+                                                                                num_std_away=num_std_away, 
+                                                                                border_padding=border_padding)
 
+    if return_gp_model:
+        return partial_gp_disturbance_fn_for_hjr_grid, gp_model_partial
     return partial_gp_disturbance_fn_for_hjr_grid
 
 

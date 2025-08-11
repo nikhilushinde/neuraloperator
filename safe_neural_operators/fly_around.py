@@ -77,7 +77,7 @@ def get_gridvalue_function_from_model(disturbance_input, grid_states, model, dat
     # NOTE: Temporary: need to change the input space to have full state so that you can use FNO as CBF directly - this needs changes! 
 
     # 1. Get the grid inputs 
-    grid_states_tensor = torch.tensor(grid_states)
+    grid_states_tensor = torch.tensor(grid_states).to(device=device)
     grid_resolution = grid_states_tensor.shape 
 
     disturbance_input_tensor = torch.tensor(disturbance_input)
@@ -343,12 +343,12 @@ if __name__ == "__main__":
 
     # System parameters 
     dt = 0.025  # 0.01
-    goal_reset_steps = 100 #150 #20 #100 # Number of steps after which the goal is reset
+    goal_reset_steps = 50 #100 #150 #20 #100 # Number of steps after which the goal is reset
     cbf_alpha = 5.0 #1.0 #0.1 # NOTE: 5.0 seems to work the best - need to tune the cbf alpha! 
     num_steps = 1000 #450 #1000 
 
-    use_gt = False #False
-    random_seed = 13
+    use_gt = False #False #True #False #True #False
+    random_seed = 33 #13
 
     if use_gt: 
         save_dir = save_dir + "_gt"
@@ -364,9 +364,19 @@ if __name__ == "__main__":
     model.eval()
 
 
+    # # 2. Create dataset for now
+    # samples_for_train = 90
+    # samples_for_test = 10 
+    # datapoints_per_sample = 1000
+    # batch_size = 128 #32
+    # pre_sample_dataset = True 
+    # encode_output = False 
+    # encode_input = True 
+    # encoding = "channel-wise"
+
     # 2. Create dataset for now
-    samples_for_train = 90
-    samples_for_test = 10 
+    samples_for_train = 10#90
+    samples_for_test = 1#10 
     datapoints_per_sample = 1000
     batch_size = 128 #32
     pre_sample_dataset = True 
