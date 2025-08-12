@@ -23,6 +23,7 @@ sys.path.append("/home/jingpei/Documents/arclab/neuraloperator/safe_neural_opera
 from safe_neural_operators.gp import GPWrapper
 from safe_neural_operators.gt_hjr_solution import GroundTruthHJSolution
 # Replaced #from deepreach.utils.comparisons import GroundTruthHJSolution
+from safe_neural_operators.nominal_controllers import randomGoalNominalController
 
 sys.path.append("/home/jingpei/Documents/arclab/L4DC25_project")
 
@@ -39,7 +40,6 @@ from deepreach.dynamics import dynamics_hjr
 
 
 from toy_env import simEnv
-from disturbance_controller_utils import randomGoalNominalController, HorizontalVelocityWind
 
 ####################################### Disturbance Functions #######################################
 def get_disturbance_function_sincos(max_magnitude, phase_multiplier, phase_shift, dim='x', use_sin=True): 

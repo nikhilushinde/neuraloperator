@@ -38,7 +38,11 @@ from data_collection import get_dynamics_model_given_disturbance_fn, get_disturb
 from baseline_experiment import plotter, expLogger 
 
 # Nominal Controller 
-from disturbance_controller_utils import randomGoalNominalController, HorizontalVelocityWind
+# from disturbance_controller_utils import randomGoalNominalController, HorizontalVelocityWind
+import sys 
+sys.path.append("/home/jingpei/Documents/arclab/neuraloperator")
+sys.path.append("/home/jingpei/Documents/arclab/neuraloperator/safe_neural_operators")
+from safe_neural_operators.nominal_controllers import randomGoalNominalController
 
 from PIL import Image, ImageDraw
 def pngs_to_gif(folder_path, output_path, duration=100, draw_frame_number=False):
