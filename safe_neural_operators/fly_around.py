@@ -89,7 +89,7 @@ def get_gridvalue_function_from_model(disturbance_input, grid_states, model, dat
     expanded_dims = list(grid_resolution[:-1])
     expanded_dims.insert(channel_dim, 1)
     grid_input = disturbance_input_tensor.view(grid_resolution[0], grid_resolution[1], 1, 1, 1)
-    grid_input = grid_input.expand(*expanded_dims)
+    grid_input = grid_input.expand(*expanded_dims).to(device=device)
 
     # Inputs of the shape (batch_dim, channels, 41,41)
     # Channels: [disturbance magnitude, grid xvel, grid yvel]
@@ -97,7 +97,7 @@ def get_gridvalue_function_from_model(disturbance_input, grid_states, model, dat
     reorg_grid_channeldims = list(range(len(grid_resolution)))
     last_dim_num = reorg_grid_channeldims.pop(-1)  # Remove last dim
     reorg_grid_channeldims.insert(channel_dim, last_dim_num)  # Insert at channel_dim
-    last_grid = last_grid.permute(*reorg_grid_channeldims) 
+    last_grid = last_grid.permute(*reorg_grid_channeldims).to(device=device)  
 
     # 2. Stack to create all the grid states # NOTE: HARDCODED FOR CHANNEL_DIM 1 / 2 here 
     appended_grid_input = torch.cat((grid_input, last_grid), dim=channel_dim)
