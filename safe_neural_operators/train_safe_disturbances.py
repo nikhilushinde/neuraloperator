@@ -7,6 +7,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 from hjr_dataset import HJRDataset
+from hjr_full_partial_dataset import HJRFullPartialDataset
 
 import sys 
 sys.path.append("/home/jingpei/Documents/arclab/L4DC25_project")
@@ -30,6 +31,7 @@ from neuralop import LpLoss, H1Loss
 
 
 def main(data_root_dir, 
+         use_full_partial_dataset, 
          samples_for_train, 
          samples_for_test, 
          datapoints_per_sample,
@@ -53,10 +55,40 @@ def main(data_root_dir,
          device, 
          train_epochs, 
          save_every, 
-         eval_interval):
+         eval_interval, 
+         datapoints_per_partial_sample=None,):
     
     # Create Dataset 
-    dataset = HJRDataset(root_dir=data_root_dir, 
+    if use_full_partial_dataset: 
+        # Full and Partial Dataset
+        if type(samples_for_train) is int:
+            num_train = samples_for_train
+        else: 
+            num_train = len(samples_for_train)
+        if type(samples_for_test) is int:
+            num_test = samples_for_test
+        else: 
+            num_test = len(samples_for_test)
+        percent_train = num_train / (num_train + num_test)
+
+        assert(datapoints_per_partial_sample is not None), "datapoints_per_partial_sample must be provided when using full and partial dataset."
+        dataset = HJRFullPartialDataset(
+            root_dir=data_root_dir, 
+            samples_for_dataset=samples_for_train + samples_for_test, 
+            percent_test=1-percent_train, 
+            datapoints_per_full_sample=datapoints_per_sample, 
+            datapoints_per_partial_sample=datapoints_per_partial_sample,
+
+            batch_size=batch_size, 
+            pre_sample_dataset=pre_sample_dataset,
+
+            encode_input=encode_input, 
+            encode_output=encode_output, 
+            encoding=encoding
+        )
+    else:
+        # Only Full Dataset
+        dataset = HJRDataset(root_dir=data_root_dir, 
                     samples_for_train=samples_for_train, 
                     samples_for_test=samples_for_test, 
                     datapoints_per_sample=datapoints_per_sample,
@@ -143,12 +175,22 @@ def main(data_root_dir,
 
 
 if __name__ == "__main__":
+
+    # Save Directory
+    # save_dir = "/media/jingpei/DATA/fno_models/safe_neural-7-20-25_500data_revised"
+    save_dir = "/media/jingpei/DATA/fno_models/safe_neural-8-13-25_fullpartial_500"
     
     # Dataset Parameters 
-    data_root_dir = "/media/jingpei/DATA/fno_gp_data_2000"
+    # data_root_dir = "/media/jingpei/DATA/fno_gp_data_2000"
+    # use_full_partial_dataset = False 
+    data_root_dir = "/media/jingpei/DATA/fno_data/fno_gp_data_full_partial_750"
+    use_full_partial_dataset = True 
+
     samples_for_train = 500 #90
     samples_for_test = 50 #10 
     datapoints_per_sample = 1000
+    datapoints_per_partial_sample = 400
+
     batch_size = 256 #32
     pre_sample_dataset = True 
     encode_output = False 
@@ -168,7 +210,6 @@ if __name__ == "__main__":
     
 
     # Saving Parameters
-    save_dir = "/media/jingpei/DATA/fno_models/safe_neural-7-20-25_500data_revised"
     device= "cuda:0"
     train_epochs = 100
     save_every = 1
@@ -176,6 +217,7 @@ if __name__ == "__main__":
 
 
     main(data_root_dir=data_root_dir, 
+         use_full_partial_dataset=use_full_partial_dataset,
          samples_for_train=samples_for_train, 
          samples_for_test=samples_for_test, 
          datapoints_per_sample=datapoints_per_sample,
@@ -199,5 +241,7 @@ if __name__ == "__main__":
          device=device, 
          train_epochs=train_epochs, 
          save_every=save_every, 
-         eval_interval=eval_interval
+         eval_interval=eval_interval, 
+
+         datapoints_per_partial_sample=datapoints_per_partial_sample,
          )

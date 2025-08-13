@@ -190,7 +190,7 @@ class HJRDataset:
 
         if encode_output: 
             if encoding == "channel-wise":
-                reduce_dims = list(range(self._train_db.output_data[0].ndim + 1))
+                reduce_dims = list(range(self._train_db.output_data[0].ndim - 2 + 1)) # - 2 as an xvel, yvel slice is returned (truncating 2 dimensions)
                 # preserve mean for each channel
                 reduce_dims.pop(channel_dim)
             elif encoding == "pixel-wise":

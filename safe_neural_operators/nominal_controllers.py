@@ -17,7 +17,7 @@ def dummy_zero_controller(x):
 
 
 class NominalController:
-    def __init__(self, system, system_type, min_control, max_control, init_goal_position):
+    def __init__(self, system, system_type, min_control, max_control, init_goal_position, verbose=False):
         self.system = system
         supported_systems = ["Quad2DAttitude", "Quad10D"]
         assert system_type in supported_systems, (
@@ -38,6 +38,7 @@ class NominalController:
 
         self.system_type = system_type
         self.init_system(system_type=system_type)
+        self.verbose = verbose
         return
 
     def init_system(self, system_type="Quad2DAttitude"):
@@ -178,7 +179,8 @@ class NominalController:
 
         # compute the LQR gain
         K = np.matrix(scipy.linalg.inv(R) * (B.T * X))
-        print("Gain matrix: ", K)
+        if self.verbose:
+            print("Gain matrix: ", K)
 
         # import pdb; pdb.set_trace()
 
@@ -216,11 +218,13 @@ class randomGoalNominalController(NominalController):
         env=None,
         goal_threshold=0.1,
         goal_reset_step=np.inf,
+        verbose=False
     ):
         self.env = env
         self.step_since_goal_reset = 0
         self.goal_threshold = goal_threshold
         self.goal_reset_step = goal_reset_step
+        self.verbose = verbose
 
         if self.env is not None:
             self.plot_state_bounds = env.system.state_test_range()
@@ -242,6 +246,7 @@ class randomGoalNominalController(NominalController):
             min_control=min_control,
             max_control=max_control,
             init_goal_position=init_goal_position,
+            verbose=verbose
         )
 
         return
@@ -281,7 +286,8 @@ class randomGoalNominalController(NominalController):
 
             new_goal_in_avoid = self.avoid_fn(torch.from_numpy(new_goal)) < 0
 
-        print(f"\n\n New goal: {new_goal}")
+        if self.verbose: 
+            print(f"\n\n New goal: {new_goal}")
         return new_goal
 
     def __call__(self, state):
@@ -292,7 +298,8 @@ class randomGoalNominalController(NominalController):
         if np.linalg.norm(state - self.goal) < self.goal_threshold or self.step_since_goal_reset > self.goal_reset_step:
             new_goal = self.generate_random_goal()
             self.set_goal(new_goal)
-            print(f"\nNew goal: {new_goal}\n")
+            if self.verbose: 
+                print(f"\nNew goal: {new_goal}\n")
 
         return control
 

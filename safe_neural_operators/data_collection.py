@@ -378,6 +378,7 @@ def solve_and_save_hjr(
         grid_resolution,
         save_index, 
         save_folder, 
+        save_prefix=None,
         save_grid=False): 
     """
     Function to solve HJR solution to the given system and then save the solution to the specified path
@@ -396,7 +397,12 @@ def solve_and_save_hjr(
     # Save the grid states 
     if save_grid: 
         grid_states = np.array(ground_truth_hj_solution.grid.states)
-        grid_states_path = os.path.join(save_folder, f"{save_index:03d}_grid_states.pt")
+        if save_prefix is not None:
+            save_name = f"{save_prefix}_grid_states.pt"
+        else: 
+            save_name = f"{save_index:03d}_grid_states.pt"
+
+        grid_states_path = os.path.join(save_folder, save_name)
         torch.save(grid_states, grid_states_path)#, _use_new_zipfile_serialization=True)
         print(f"Saved grid states to {grid_states_path}")
 
@@ -434,6 +440,9 @@ def solve_and_save_hjr(
     save_input_path = os.path.join(save_folder, f"{save_index:03d}_input.pt")
     save_output_path = os.path.join(save_folder, f"{save_index:03d}_output.pt")
 
+    if torch.any(torch.isnan(disturbance_inputs_tensor)):
+        raise ValueError("Disturbance inputs contain NaN values. Please check the disturbance function.")
+
     os.makedirs(save_folder, exist_ok=True)  # Ensure the folder exists
     torch.save(disturbance_inputs_tensor, save_input_path) #, _use_new_zipfile_serialization=True)
     torch.save(torch_value_function_outputs, save_output_path) #, _use_new_zipfile_serialization=True)
@@ -461,11 +470,15 @@ def load_hjr_solution(load_path, load_index):
     output_tensor = torch.load(output_path) #, map_location='cpu')
     return input_tensor, output_tensor
 
-def load_grid_states(load_path, load_index): 
+def load_grid_states(load_path, load_index, load_prefix=None): 
     """
     Function to load the grid states from the specified path
     """
-    grid_states_path = os.path.join(load_path, f"{load_index:03d}_grid_states.pt")
+    if load_prefix is not None:
+        load_name = f"{load_prefix}_grid_states.pt"
+    else:
+        load_name = f"{load_index:03d}_grid_states.pt"
+    grid_states_path = os.path.join(load_path, load_name)
     grid_states = torch.load(grid_states_path) #, map_location='cpu')
     return grid_states
 
@@ -540,17 +553,210 @@ def create_hjr_disturbance_dataset(num_datapoints,
         )
     print("Done")
 
+def create_hjr_full_partial_disturbance_dataset(num_datapoints,
+                                                save_folder, 
+                                                disturbance_variation_type="sincos", 
+                                                full_grid_resolution=(41, 41, 41, 41), 
+                                                partial_grid_resolution=(41, 41, 21, 21),
+                                                start_num=None, 
+                                                end_num=None,
+                                                tMin = 0.0, 
+                                                tMax = 3.0,
+                                                dt = 0.025): 
+    """
+    Create an HJR dataset with both full and partially learned with GP disturbance functions.
+    Args: 
+        - num_datapoints: Number of datapoints to create
+        - save_folder: Folder to save the dataset to
+        - disturbance_variation_type: Type of disturbance variation to use (e.g., "sincos")
+        - full_grid_resolution: Resolution for the full disturbance function grid
+        - partial_grid_resolution: Resolution for the partial disturbance function grid
+        - start_num: Starting index for saving files
+        - end_num: Ending index for saving files
+
+        Needed for the partial disturbance function:
+        - tMin: Minimum time for the environment
+        - tMax: Maximum time for the environment
+        - dt: Time step for the environment
+    """
+    # Disturbance function parameter ranges
+    min_max_magnitude = 0.25 
+    max_max_magnitude = 0.75 
+
+    min_phase_multiplier = 0.05
+    max_phase_multiplier = 5 
+
+    min_phase_shift = 0
+    max_phase_shift = np.pi / 2
+
+    # Partial training parameter ranges
+    min_initial_sample_radius = 0.5
+    max_initial_sample_radius = 1.5
+
+    min_fly_around_timesteps = 200
+    max_fly_around_timesteps = 7500
+
+    min_steps_per_goal = 50
+    max_steps_per_goal = 150
+
+    use_partial_disturbance_percentage = 0.7
+    
+    gp_sample_freq = 5
+
+    if start_num is None:
+        start_num = 0
+
+    if end_num is None:
+        end_num = num_datapoints
+
+    use_partial_disturbance_fn = False
+
+    assert(end_num > 2) # Ensure there are enough datapoints to create both full and partial disturbance functions
+    for num in tqdm(range(start_num, end_num)):
+        solved_and_saved = False
+        max_tries = 10
+        try_counter = 0 
+
+        while not solved_and_saved:
+            # Full disturbance function random parameters
+            curr_max_magnitude = np.random.uniform(min_max_magnitude, max_max_magnitude)
+            curr_phase_multiplier = np.random.uniform(min_phase_multiplier, max_phase_multiplier)
+            curr_phase_shift = np.random.uniform(min_phase_shift, max_phase_shift)
+            curr_dim = np.random.choice(['x', 'y'])
+            curr_use_sin = np.random.choice([True, False])
+
+            grid_resolution = full_grid_resolution
+            full_grid_states = None 
+
+            # num = 0 use full
+            # num = 1 use partial 
+            # NOTE: these are fixed so that you can create and save the grid states at these indices
+            if num != 0: 
+                if num == 1: 
+                    use_partial_disturbance_fn = True 
+                else: 
+                    # randomly choose whether to use the partial disturbance function or not
+                    use_partial_disturbance_fn = np.random.rand() < use_partial_disturbance_percentage
+        
+            # Create full disturbance function
+            if disturbance_variation_type == "sincos":
+                disturbance_function = get_disturbance_function_sincos(
+                    max_magnitude=curr_max_magnitude, 
+                    phase_multiplier=curr_phase_multiplier, 
+                    phase_shift=curr_phase_shift, 
+                    dim=curr_dim,  # or 'y' depending on the direction you want
+                    use_sin=curr_use_sin  # or False for cosine
+                )
+            else: 
+                raise ValueError(f"Disturbance variation type {disturbance_variation_type} is not supported. Please implement it in the future.")
+            
+            # Create partial disturbance function
+            if use_partial_disturbance_fn: 
+                print("\n\nUsing Partial Disturbance Function\n\n")
+                if full_grid_states is None: 
+                    full_grid_states = load_grid_states(save_folder, load_index=0, load_prefix="full")  
+
+                initial_sample_radius = np.random.uniform(min_initial_sample_radius, max_initial_sample_radius)
+                fly_around_timesteps = np.random.randint(min_fly_around_timesteps, max_fly_around_timesteps)
+                steps_per_goal = np.random.randint(min_steps_per_goal, max_steps_per_goal)
+        
+                xy_range = [[full_grid_states[:, 0, 0, 0, 0].min(), full_grid_states[:, 0, 0, 0, 0].max()], 
+                            [full_grid_states[0, :, 0, 0, 1].min(), full_grid_states[0, :, 0, 0, 1].max()]]
+                xy_grid_states = full_grid_states[:, :, 0, 0, :] 
+
+                grid_resolution = partial_grid_resolution
+
+                flyaround_disturbance_fn, flyaround_gp_model = get_disturbance_function_flyaround(full_disturbance_fn=disturbance_function, 
+                                                        initial_sample_radius=initial_sample_radius, 
+                                                        fly_around_timesteps=fly_around_timesteps, 
+                                                        steps_per_goal=steps_per_goal,
+                                                        sample_freq=gp_sample_freq,
+                                                        xy_range=xy_range, 
+                                                        xy_grid_states=xy_grid_states, 
+                                                        dt=dt,
+                                                        tMin=tMin, 
+                                                        tMax=tMax, 
+                                                        min_disturbance_magnitude=0.0,
+                                                        max_disturbance_magnitude=max_max_magnitude, 
+                                                        return_gp_model=True,
+                                                        reoptimize_gp=False, 
+                                                        border_padding=None)
+                disturbance_function = flyaround_disturbance_fn
+            else: 
+                print("\n\nUsing Full Disturbance Function\n\n")
+
+
+            # 2. Create a new dynamics model with the disturbance function
+            dynamics_model = get_dynamics_model_given_disturbance_fn(
+                disturbance_function=disturbance_function, 
+                tMin=tMin, 
+                tMax=tMax
+            )
+            
+
+            # 3. Solve and save the HJR solution using the dynamics model 
+            if num == 0: 
+                save_grid = True
+                save_prefix = "full"
+            elif num == 1: 
+                save_grid = True
+                save_prefix = "partial"
+            else: 
+                save_grid = False 
+                save_prefix = None
+
+                        
+            # Surround with try catch to prevent crashes and nan exceptions
+            try:
+                solve_and_save_hjr(
+                    dynamics_model=dynamics_model, 
+                    num_time_steps=5,  # Adjust as needed
+                    grid_resolution=grid_resolution,  # Default resolution
+                    save_index=num, 
+                    save_folder=save_folder, 
+                    save_prefix=save_prefix,
+                    save_grid=save_grid
+                )
+                solved_and_saved = True  # If successful, set the flag to True
+            except Exception as e:
+                if try_counter >= max_tries:
+                    print(f"Failed to solve and save HJR for index {num} after {max_tries} attempts.")
+                    raise e 
+
+                try_counter += 1
+                print(f"Error occurred while solving and saving HJR for index {num}: {e}")
+                print("Retrying...")
+                solved_and_saved = False # Reset the flag to retry
+                continue
+
+    print("Done")
 
 if __name__ == "__main__":
-    # Example usage
-    num_datapoints = 2000 #250
-    start_num = 1907 #822
+    use_full_partial_dataset = True     
 
-    save_folder = "/media/jingpei/DATA/fno_gp_data_2000"
+    # Example usage
+    num_datapoints = 750 #2000 #250
+    start_num = 0 #249 #0 #1907 #822
+
+    save_folder = "/media/jingpei/DATA/fno_data/fno_gp_data_full_partial_750_test"
     disturbance_variation_type = "sincos"
     grid_resolution = (41, 41, 41, 41) #(51, 51, 51, 51)  # Default resolution
 
     os.makedirs(save_folder, exist_ok=True)  # Ensure the folder exists
 
-    create_hjr_disturbance_dataset(num_datapoints, save_folder, disturbance_variation_type, grid_resolution, 
-                                   start_num=start_num)
+    if not use_full_partial_dataset:
+        # Only Full Dataset
+        create_hjr_disturbance_dataset(num_datapoints, save_folder, disturbance_variation_type, grid_resolution, 
+                                    start_num=start_num)
+    else: 
+        # Full and Partial Dataset
+        partial_grid_resolution = (41, 41, 21, 21)
+        create_hjr_full_partial_disturbance_dataset(num_datapoints=num_datapoints, 
+                                                    save_folder=save_folder, 
+                                                    disturbance_variation_type=disturbance_variation_type, 
+                                                    full_grid_resolution=grid_resolution, 
+                                                    partial_grid_resolution=partial_grid_resolution, 
+                                                    start_num=start_num, 
+                                                    tMin=0.0, 
+                                                    tMax=3.0,
+                                                    dt=0.025)
